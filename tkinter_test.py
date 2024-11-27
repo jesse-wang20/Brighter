@@ -1,148 +1,205 @@
+import sys
+import time
 import cv2
 from deepface import DeepFace
-import tkinter as tk
-from tkinter import ttk
 import random
 import requests
-import webbrowser
+from PyQt5.QtWidgets import (
+    QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QSpinBox
+)
+from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtCore import QTimer, Qt, QPointF, QTimeLine
+import math
 
-root = tk.Tk()
-root.withdraw()
 
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-video = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+class EmotionApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Brighter")
+        self.setGeometry(100, 100, 400, 300)
 
-if not video.isOpened():
-    raise IOError("Cannot open webcam")
+        self.popup_open = False
+        self.last_popup_time = 0
+        self.pause_until = 0
+        self.popup_cooldown = 10
+        self.negative_emotions = {"sad", "angry", "fear"}
+        self.quotes = self.fetch_quotes()
 
-negative_emotions = {'sad', 'angry', 'fear'}
-popup_open = False
-quotes_array = []
+        self.video_capture = cv2.VideoCapture(0)
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-# Fetch quotes from the API
-def fetch_quotes():
-    global quotes_array
-    keywords = ['happiness', 'inspiration', 'kindness']
-    for keyword in keywords:
-        url = f"https://zenquotes.io/api/quotes/keyword={keyword}"
-        try:
-            response = requests.get(url)
-            if response.status_code == 200:
-                quotes = response.json()
-                for quote in quotes:
-                    quotes_array.append({
-                        "quote": quote["q"],
-                        "author": quote["a"]
-                    })
-        except Exception as e:
-            print(f"Error fetching quotes: {e}")
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.process_video)
+        self.timer.start(30)
 
-fetch_quotes()
+    def fetch_quotes(self):
+        # Manually defined URLS that represent quotes that could help.
+        urls = [
+            "https://zenquotes.io/api/quotes/keyword=happiness",
+            "https://zenquotes.io/api/quotes/keyword=inspiration",
+            "https://zenquotes.io/api/quotes/keyword=kindness",
+        ]
+        quotes = []
+        for url in urls:
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    quotes.extend(response.json())
+            except Exception as e:
+                print(f"Error fetching quotes: {e}")
+        return quotes
 
-def open_help():
-    webbrowser.open("https://www.samhsa.gov/find-help/national-helpline")
+    def process_video(self):
+        # Begin video reading and face identification
+        ret, frame = self.video_capture.read()
+        if not ret:
+            return
 
-def show_custom_popup():
-    global popup_open
-    if not popup_open and quotes_array:
-        popup_open = True
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+        current_time = time.time()
 
-        random_quote = random.choice(quotes_array)
-        quote_text = random_quote["quote"]
-        author_name = random_quote["author"]
+        for x, y, w, h in faces:
+            try:
+                # Retrieve the current emotion of the face we found, if it's one of the negative emotions, we want to handle the pop up
+                analyze = DeepFace.analyze(frame, actions=["emotion"], enforce_detection=False)
+                if isinstance(analyze, list):
+                    analyze = analyze[0]
+                dominant_emotion = analyze["dominant_emotion"]
 
-        popup = tk.Toplevel(root)
-        popup.title("Positive Vibes 🌟")
-        popup.geometry("400x300")
-        popup.resizable(False, False)
+                if (
+                    dominant_emotion in self.negative_emotions
+                    and not self.popup_open
+                    and (current_time - self.last_popup_time >= self.popup_cooldown)
+                    and (current_time >= self.pause_until)
+                ):
+                    self.last_popup_time = current_time
+                    self.show_quote_popup()
 
-        window_width = 400
-        window_height = 300
-        screen_width = popup.winfo_screenwidth()
-        screen_height = popup.winfo_screenheight()
-        position_top = int((screen_height - window_height) / 2)
-        position_right = int((screen_width - window_width) / 2)
-        popup.geometry(f"{window_width}x{window_height}+{position_right}+{position_top}")
+            except Exception as e:
+                print(e)
 
-        frame = ttk.Frame(popup, padding=20)
-        frame.pack(expand=True, fill='both')
+    def show_quote_popup(self):
+        self.popup_open = True
+        self.last_popup_time = time.time()
 
-        quote_label = ttk.Label(
-            frame, 
-            text=f"\"{quote_text}\"", 
-            font=("Helvetica", 14, "italic"), 
-            foreground="#4CAF50",  
-            wraplength=360, 
-            justify="center"
-        )
-        quote_label.pack(pady=10)
+        self.popup = QWidget()
+        self.popup.setWindowTitle("Cheer Up!")
+        self.popup.setGeometry(200, 200, 400, 300)
+        self.popup.setStyleSheet("background-color: #fce4ec; font-family: Arial;")
 
-        author_label = ttk.Label(
-            frame, 
-            text=f"- {author_name}", 
-            font=("Helvetica", 12, "bold"), 
-            foreground="#555555",  
-            anchor="center"
-        )
-        author_label.pack(pady=5)
+        layout = QVBoxLayout()
+        selected_quote = random.choice(self.quotes)
+        self.quote_text = selected_quote["q"]
+        self.author_name = selected_quote["a"]
 
-        button_frame = ttk.Frame(frame)
-        button_frame.pack(pady=20, fill="x")
+        quote_label = QLabel(f'"{self.quote_text}"')
+        quote_label.setWordWrap(True)
+        quote_label.setStyleSheet("font-size: 18px; color: #880e4f;")
+        layout.addWidget(quote_label)
 
-        another_button = ttk.Button(
-            button_frame, 
-            text="Show Another Quote", 
-            command=lambda: (popup.destroy(), reset_popup(), show_custom_popup())
-        )
-        another_button.pack(side="left", padx=10)
+        author_label = QLabel(f"- {self.author_name}")
+        author_label.setStyleSheet("font-size: 14px; color: #6a1b9a;")
+        author_label.setAlignment(Qt.AlignRight)
+        layout.addWidget(author_label)
 
-        help_button = ttk.Button(
-            button_frame, 
-            text="Get Help", 
-            command=open_help
-        )
-        help_button.pack(side="right", padx=10)
+        # Define a button that allows the user to pause the popups
+        pause_layout = QHBoxLayout()
+        pause_label = QLabel("Pause popups for (minutes):")
+        pause_label.setStyleSheet("font-size: 14px; color: #880e4f;")
+        pause_spinbox = QSpinBox()
+        pause_spinbox.setRange(1, 60)
+        pause_spinbox.setStyleSheet("font-size: 14px; color: #6a1b9a;")
+        pause_button = QPushButton("Set Pause")
+        pause_button.setStyleSheet("background-color: #880e4f; color: white;")
+        pause_button.clicked.connect(lambda: self.set_pause(pause_spinbox.value()))
+        pause_layout.addWidget(pause_label)
+        pause_layout.addWidget(pause_spinbox)
+        pause_layout.addWidget(pause_button)
+        layout.addLayout(pause_layout)
 
-        close_button = ttk.Button(
-            frame, 
-            text="Close", 
-            command=lambda: (popup.destroy(), reset_popup())
-        )
-        close_button.pack(pady=10)
+        # Define a button that defines the breathing exercises
+        breathe_button = QPushButton("Try a Breathing Exercise")
+        breathe_button.setStyleSheet("background-color: #6a1b9a; color: white;")
+        breathe_button.clicked.connect(self.start_breathe_exercise)
+        layout.addWidget(breathe_button)
 
-def reset_popup():
-    global popup_open
-    popup_open = False
+        close_button = QPushButton("Close")
+        close_button.setStyleSheet("background-color: #880e4f; color: white;")
+        close_button.clicked.connect(self.close_popup)
+        layout.addWidget(close_button)
 
-def process_video():
-    global popup_open
-    _, frame = video.read()
+        self.popup.setLayout(layout)
+        self.popup.show()
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    face = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+    def set_pause(self, minutes):
+        self.pause_until = time.time() + minutes * 60
+        self.popup.close()
+        self.popup_open = False
 
-    for x, y, w, h in face:
-        image = cv2.rectangle(frame, (x, y), (x + w, y + h), (89, 2, 236), 1)
-        try:
-            analyze = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
-            if isinstance(analyze, list):
-                analyze = analyze[0]
-            dominant_emotion = analyze['dominant_emotion']
-            if dominant_emotion in negative_emotions and not popup_open:
-                root.after(0, show_custom_popup)
-        except Exception as e: 
-            print(e)
-            print('No face detected')
+    def close_popup(self):
+        self.popup.close()
+        self.popup_open = False
 
-    cv2.imshow('video', frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        root.quit()
-        return
+    def start_breathe_exercise(self):
+        self.breathe_popup = BreatheExercise()
+        self.breathe_popup.show()
 
-    root.after(10, process_video)
+    def closeEvent(self, event):
+        self.video_capture.release()
+        cv2.destroyAllWindows()
+        super().closeEvent(event)
 
-root.after(0, process_video)
-root.mainloop()
 
-video.release()
-cv2.destroyAllWindows()
+class BreatheExercise(QWidget):
+    # Define a class window for breathing exercises
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Breathe Exercise")
+        self.setGeometry(300, 300, 400, 400)
+        self.setStyleSheet("background-color: #e3f2fd;")
+
+        self.label = QLabel(self)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setStyleSheet("font-size: 20px; color: #0d47a1;")
+        self.label.setGeometry(50, 20, 300, 50)
+
+        # Define a timelien for the loop
+        self.timeline = QTimeLine(19000, self)
+        self.timeline.setFrameRange(0, 360)
+        self.timeline.frameChanged.connect(self.update_position)
+        self.timeline.setLoopCount(0)
+        self.timeline.start()
+        self.resize(400, 400)
+        self.angle = 0
+
+    def update_position(self, frame):
+        self.angle = frame
+        self.update()
+        
+        # Approximate the locations for when the user should be performing breathing activities. 
+        if frame < 76:
+            self.label.setText("Breathe In")
+        elif frame < 133:
+            self.label.setText("Hold")
+        else:
+            self.label.setText("Breathe Out")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        center = self.rect().center()
+        radius = min(self.width(), self.height()) // 3
+        painter.setBrush(QColor(173, 216, 230))
+        painter.drawEllipse(center, radius, radius)
+        angle_radians = math.radians(self.angle)
+        ball_x = center.x() + radius * math.cos(angle_radians)
+        ball_y = center.y() + radius * math.sin(angle_radians)
+        painter.setBrush(QColor(255, 99, 71))
+        painter.drawEllipse(QPointF(ball_x, ball_y), 10, 10)
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    main_window = EmotionApp()
+    main_window.show()
+    sys.exit(app.exec_())
