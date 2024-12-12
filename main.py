@@ -70,7 +70,22 @@ class EmotionApp(QWidget):
 
         self.setLayout(layout)
 
-
+    def fetch_quotes(self):
+        # Manually defined URLS that represent quotes that could help.
+        urls = [
+            "https://zenquotes.io/api/quotes/keyword=happiness",
+            "https://zenquotes.io/api/quotes/keyword=inspiration",
+            "https://zenquotes.io/api/quotes/keyword=kindness",
+        ]
+        quotes = []
+        for url in urls:
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    quotes.extend(response.json())
+            except Exception as e:
+                print(f"Error fetching quotes: {e}")
+        return quotes
 
     def process_video(self):
         ret, frame = self.video_capture.read()
